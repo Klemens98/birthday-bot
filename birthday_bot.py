@@ -18,6 +18,8 @@ class BirthdayBot(discord.Client):
         intents.members = True
         intents.dm_messages = True
         intents.reactions = True  # Add reaction intents
+
+
         self.config = load_config()
         super().__init__(intents=intents, application_id=int(self.config['DISCORD']['APPLICATION_ID']))
         self.tree = app_commands.CommandTree(self)
@@ -26,6 +28,34 @@ class BirthdayBot(discord.Client):
 
     async def setup_hook(self):
         self.check_birthdays.start()
+
+    async def on_raw_reaction_add(self, payload):
+        # Check if the reaction is to a message that contains the preference text
+        if str(payload.emoji) == "✅" and payload.user_id != self.user.id:
+            channel = self.get_channel(payload.channel_id)
+            if not channel:
+                return
+                
+            try:
+                message = await channel.fetch_message(payload.message_id)
+                if "Geburtstags-Benachrichtigungen" in message.content:
+                    self.db.update_dm_preference(payload.user_id, True)
+            except discord.NotFound:
+                pass
+
+    async def on_raw_reaction_remove(self, payload):
+        # Check if the reaction is to a message that contains the preference text
+        if str(payload.emoji) == "✅" and payload.user_id != self.user.id:
+            channel = self.get_channel(payload.channel_id)
+            if not channel:
+                return
+                
+            try:
+                message = await channel.fetch_message(payload.message_id)
+                if "Geburtstags-Benachrichtigungen" in message.content:
+                    self.db.update_dm_preference(payload.user_id, False)
+            except discord.NotFound:
+                pass
 
     async def on_ready(self):
         print(f'Logged in as {self.user}')
@@ -60,15 +90,17 @@ class BirthdayBot(discord.Client):
                 birthdays = self.db.get_todays_birthdays()
                 guild = channel.guild
 
+
                 # Get all users who want notifications
                 notif_users = self.db.get_users_with_dm_enabled()
                 
                 for user_id, username, birthday in birthdays:
+
                     # Update display name if it has changed
                     member = guild.get_member(user_id)
                     display_name = member.display_name if member else username
                     if member and display_name != username:
-                        self.db.add_birthday(user_id, display_name, birthday)
+                        self.db.add_birthday(user_id, display_name, birthday, dm_preference)
                     
                     # Extract firstname if available
                     firstname = username.split()[0] if ' ' in username else None
@@ -93,9 +125,34 @@ class BirthdayBot(discord.Client):
                             except (discord.errors.Forbidden, Exception):
                                 pass  # User has DMs disabled or other errors
 
+
 def main():
     bot = BirthdayBot()
     
+    @bot.tree.command(name="createpreferences", description="Erstellt die Benachrichtigungseinstellungen (Admin)")
+    @app_commands.default_permissions(administrator=True)
+    async def create_preferences(interaction: discord.Interaction):
+        if not isinstance(interaction.channel, discord.TextChannel) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl auszuführen!", ephemeral=True)
+            return
+
+        # Get all messages in the channel
+        messages = [msg async for msg in interaction.channel.history()]
+        preference_exists = any("Geburtstags-Benachrichtigungen" in msg.content for msg in messages)
+
+        if preference_exists:
+            await interaction.response.send_message("Eine Benachrichtigungseinstellung existiert bereits in diesem Kanal!", ephemeral=True)
+            return
+
+        message = await interaction.channel.send(
+            "🔔 **Geburtstags-Benachrichtigungen**\n\n"
+            "Reagiere mit ✅ um private Geburtstagsnachrichten zu erhalten.\n"
+            "Entferne deine Reaktion um die Benachrichtigungen zu deaktivieren."
+        )
+        await message.add_reaction("✅")
+        await message.pin()
+        await interaction.response.send_message("Benachrichtigungseinstellungen wurden erstellt!", ephemeral=True)
+
     @bot.tree.command(name="help", description="Zeigt die Hilfe an")
     async def help(interaction: discord.Interaction):
         help_text = """**🎂 Birthday Bot Befehle:**
@@ -113,6 +170,7 @@ def main():
             help_text += """\n**Admin Befehle:**
         /birthdaycheck - Überprüft manuell die heutigen Geburtstage und sendet Glückwünsche
         /setupnotify - Erstellt die Benachrichtigungs-Nachricht für Geburtstags-Benachrichtigungen
+
         """
             
         help_text += "\nBitte benutze das richtige Format für die Befehle!"
@@ -244,6 +302,27 @@ def main():
             await interaction.response.send_message("\n".join(response_lines))
         else:
             await interaction.response.send_message("Keine Geburtstage in der Datenbank gefunden!")
+
+    @bot.tree.command(name="testdm", description="Testet die DM-Funktionalität")
+    @app_commands.default_permissions(administrator=True)
+    async def testdm(interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl auszuführen!", ephemeral=True)
+            return
+
+        # Check if user has opted in for DMs
+        user_preference = bot.db.get_dm_preference(interaction.user.id)
+        if not user_preference:
+            await interaction.response.send_message("Du hast DM-Benachrichtigungen nicht aktiviert. Bitte reagiere mit ✅ auf die Benachrichtigungseinstellungen!", ephemeral=True)
+            return
+
+        try:
+            await interaction.user.send("🎉 Dies ist eine Test-DM vom Birthday Bot! 🎂")
+            await interaction.response.send_message("DM wurde erfolgreich gesendet!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("Konnte keine DM senden. Überprüfe, ob du DMs von Server-Mitgliedern erlaubst!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Ein Fehler ist aufgetreten: {str(e)}", ephemeral=True)
 
     @bot.tree.command(name="birthdaycheck", description="Überprüft manuell die heutigen Geburtstage")
     async def birthdaycheck(interaction: discord.Interaction):
