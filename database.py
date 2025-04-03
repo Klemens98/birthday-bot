@@ -18,7 +18,6 @@ class DatabaseService:
             host=db_config['HOST'],
             port=db_config['PORT']
         )
-        self.create_tables()
 
 
     def get_todays_birthdays(self):
