@@ -20,16 +20,6 @@ class DatabaseService:
         )
         self.create_tables()
 
-    def create_tables(self):
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS birthdays (
-                    user_id BIGINT PRIMARY KEY,
-                    username VARCHAR(100) NOT NULL,
-                    birthday DATE NOT NULL
-                )
-            """)
-            self.conn.commit()
 
     def get_todays_birthdays(self):
         tz = pytz.timezone('Europe/Berlin')
@@ -44,15 +34,35 @@ class DatabaseService:
             """, (now.month, now.day))
             return cur.fetchall()
 
-    def add_birthday(self, user_id: int, username: str, birthday: datetime):
+    def add_birthday(self, user_id: int, username: str, birthday: datetime, dm_preference: bool = False):
         with self.conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO birthdays (user_id, username, birthday)
-                VALUES (%s, %s, %s)
+                INSERT INTO birthdays (user_id, username, birthday, dm_preference)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE 
-                SET username = EXCLUDED.username, birthday = EXCLUDED.birthday
-            """, (user_id, username, birthday))
+                SET username = EXCLUDED.username, 
+                    birthday = EXCLUDED.birthday,
+                    dm_preference = EXCLUDED.dm_preference
+            """, (user_id, username, birthday, dm_preference))
             self.conn.commit()
+
+    def update_dm_preference(self, user_id: int, dm_preference: bool):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE birthdays
+                SET dm_preference = %s
+                WHERE user_id = %s
+            """, (dm_preference, user_id))
+            self.conn.commit()
+
+    def get_users_with_dm_enabled(self):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, username, birthday
+                FROM birthdays
+                WHERE dm_preference = TRUE
+            """)
+            return cur.fetchall()
 
     def get_next_birthday(self):
         tz = pytz.timezone('Europe/Berlin')

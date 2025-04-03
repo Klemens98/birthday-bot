@@ -77,8 +77,15 @@ def main():
         /setbirthday DD.MM.YYYY - Setzt deinen Geburtstag
         /nextbirthday [username] - Zeigt den nächsten Geburtstag oder sucht nach einem bestimmten Benutzer
         /upcoming - Zeigt die nächsten 5 anstehenden Geburtstage
-
-        Bitte benutze das richtige Format für die Befehle!"""
+        """
+        
+        # Add admin commands if user has admin permissions
+        if isinstance(interaction.channel, discord.TextChannel) and interaction.user.guild_permissions.administrator:
+            help_text += """\n**Admin Befehle:**
+        /birthdaycheck - Überprüft manuell die heutigen Geburtstage und sendet Glückwünsche
+        """
+            
+        help_text += "\nBitte benutze das richtige Format für die Befehle!"
         await interaction.response.send_message(help_text)
 
     @bot.tree.command(name="setbirthday", description="Setzt deinen Geburtstag (Format: DD.MM.YYYY)")
@@ -195,6 +202,41 @@ def main():
             await interaction.response.send_message("\n".join(response_lines))
         else:
             await interaction.response.send_message("Keine Geburtstage in der Datenbank gefunden!")
+
+    @bot.tree.command(name="birthdaycheck", description="Überprüft manuell die heutigen Geburtstage")
+    async def birthdaycheck(interaction: discord.Interaction):
+        # Check if user has admin permissions
+        if not isinstance(interaction.channel, discord.TextChannel) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl auszuführen!", ephemeral=True)
+            return
+            
+        await interaction.response.defer(thinking=True)
+        
+        tz = pytz.timezone('Europe/Berlin')
+        now = datetime.now(tz)
+        channel = interaction.channel
+        guild = interaction.guild
+        
+        birthdays = bot.db.get_todays_birthdays()
+        if not birthdays:
+            await interaction.followup.send("Heute hat niemand Geburtstag!", ephemeral=True)
+            return
+            
+        birthday_messages = []
+        for user_id, username, birthday in birthdays:
+            age = now.year - birthday.year
+            # Update display name if it has changed
+            member = guild.get_member(user_id)
+            display_name = member.display_name if member else username
+            if member and display_name != username:
+                bot.db.add_birthday(user_id, display_name, birthday)
+            
+            message = f"🎉 Alles Gute zum Geburtstag, {display_name}! 🎂"
+            birthday_messages.append(message)
+            await channel.send(message)
+        
+        summary = f"Manuelle Geburtstagsüberprüfung abgeschlossen: {len(birthdays)} Geburtstage gefunden."
+        await interaction.followup.send(summary, ephemeral=True)
 
     bot.run(load_config()['DISCORD']['TOKEN'])
 
