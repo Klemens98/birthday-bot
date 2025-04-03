@@ -18,8 +18,6 @@ class DatabaseService:
             host=db_config['HOST'],
             port=db_config['PORT']
         )
-        self.create_tables()
-
 
     def get_todays_birthdays(self):
         tz = pytz.timezone('Europe/Berlin')
@@ -27,7 +25,7 @@ class DatabaseService:
         
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, username, birthday 
+                SELECT user_id, username, birthday, dm_preference 
                 FROM birthdays 
                 WHERE EXTRACT(MONTH FROM birthday) = %s 
                 AND EXTRACT(DAY FROM birthday) = %s
@@ -49,10 +47,11 @@ class DatabaseService:
     def update_dm_preference(self, user_id: int, dm_preference: bool):
         with self.conn.cursor() as cur:
             cur.execute("""
-                UPDATE birthdays
-                SET dm_preference = %s
-                WHERE user_id = %s
-            """, (dm_preference, user_id))
+                INSERT INTO birthdays (user_id, dm_preference)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE 
+                SET dm_preference = EXCLUDED.dm_preference
+            """, (user_id, dm_preference))
             self.conn.commit()
 
     def get_users_with_dm_enabled(self):
@@ -122,3 +121,13 @@ class DatabaseService:
                 LIMIT %s
             """, (limit,))
             return cur.fetchall()
+
+    def get_dm_preference(self, user_id: int) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT dm_preference
+                FROM birthdays
+                WHERE user_id = %s
+            """, (user_id,))
+            result = cur.fetchone()
+            return result[0] if result else False
