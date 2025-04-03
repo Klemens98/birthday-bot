@@ -17,11 +17,14 @@ class BirthdayBot(discord.Client):
         intents.message_content = True
         intents.members = True
         intents.dm_messages = True
-        intents.reactions = True  # Add reactions intent
+        intents.reactions = True  # Add reaction intents
+
+
         self.config = load_config()
         super().__init__(intents=intents, application_id=int(self.config['DISCORD']['APPLICATION_ID']))
         self.tree = app_commands.CommandTree(self)
         self.db = DatabaseService()
+        self.notify_message_id = None
 
     async def setup_hook(self):
         self.check_birthdays.start()
@@ -67,35 +70,61 @@ class BirthdayBot(discord.Client):
         except Exception as e:
             print(f'Failed to sync application commands: {e}')
 
+    async def on_raw_reaction_add(self, payload):
+        if payload.message_id == self.notify_message_id and str(payload.emoji) == "✅":
+            self.db.update_dm_preference(payload.user_id, True)
+
+    async def on_raw_reaction_remove(self, payload):
+        if payload.message_id == self.notify_message_id and str(payload.emoji) == "✅":
+            self.db.update_dm_preference(payload.user_id, False)
+
     @tasks.loop(hours=24)
     async def check_birthdays(self):
         tz = pytz.timezone('Europe/Berlin')
         now = datetime.now(tz)
         
-        # Only check at 9:00 AM German time
-        if now.hour == 9:
+        # Only check at midnight German time
+        if now.hour == 0:
             channel = self.get_channel(int(self.config['DISCORD']['CHANNEL_ID']))
             if channel and isinstance(channel, discord.TextChannel):
                 birthdays = self.db.get_todays_birthdays()
                 guild = channel.guild
-                for user_id, username, birthday, dm_preference in birthdays:
-                    age = now.year - birthday.year
+
+
+                # Get all users who want notifications
+                notif_users = self.db.get_users_with_dm_enabled()
+                
+                for user_id, username, birthday in birthdays:
+
                     # Update display name if it has changed
                     member = guild.get_member(user_id)
                     display_name = member.display_name if member else username
                     if member and display_name != username:
                         self.db.add_birthday(user_id, display_name, birthday, dm_preference)
                     
-                    message = f"🎉 Alles Gute zum {age}. Geburtstag, {display_name}! 🎂"
+                    # Extract firstname if available
+                    firstname = username.split()[0] if ' ' in username else None
+                    name_to_use = firstname or display_name
+                    
+                    # Construct message without age
+                    message = f"🎉 Alles Gute zum Geburtstag, {name_to_use}"
+                    if firstname and display_name != username:
+                        message += f" ({display_name})"
+                    message += "! 🎂"
+                    
+                    # Only send message in channel
                     await channel.send(message)
-                    # Try to send DM to birthday person if they opted in
-                    if dm_preference:
-                        try:
-                            user = await self.fetch_user(user_id)
-                            if user:
-                                await user.send(f"🎂 Alles Gute zum {age}. Geburtstag! 🎉")
-                        except discord.errors.Forbidden:
-                            pass  # User has DMs disabled
+                    
+                    # Notify opted-in users about the birthday
+                    for notif_user_id, _, _ in notif_users:
+                        if notif_user_id != user_id:  # Don't notify the birthday person
+                            try:
+                                notif_user = await self.fetch_user(notif_user_id)
+                                if notif_user:
+                                    await notif_user.send(f"🎂 {name_to_use} hat heute Geburtstag!")
+                            except (discord.errors.Forbidden, Exception):
+                                pass  # User has DMs disabled or other errors
+
 
 def main():
     bot = BirthdayBot()
@@ -128,30 +157,50 @@ def main():
     async def help(interaction: discord.Interaction):
         help_text = """**🎂 Birthday Bot Befehle:**
         /help - Zeigt diese Hilfe an
-        /setbirthday DD.MM.YYYY - Setzt deinen Geburtstag
+        /setbirthday DD.MM.YYYY [firstname] [lastname] - Setzt deinen Geburtstag mit optionalem Vor- und Nachnamen
+        /setbirthdayfor username DD.MM.YYYY [firstname] [lastname] - Setzt den Geburtstag für einen anderen Benutzer
         /nextbirthday [username] - Zeigt den nächsten Geburtstag oder sucht nach einem bestimmten Benutzer
         /upcoming - Zeigt die nächsten 5 anstehenden Geburtstage
+
+        ℹ️ Um Geburtstags-Benachrichtigungen zu erhalten, reagiere mit ✅ auf die Benachrichtigungsnachricht im Geburtstags-Kanal.
         """
         
         # Add admin commands if user has admin permissions
         if isinstance(interaction.channel, discord.TextChannel) and interaction.user.guild_permissions.administrator:
             help_text += """\n**Admin Befehle:**
         /birthdaycheck - Überprüft manuell die heutigen Geburtstage und sendet Glückwünsche
-        /createpreferences - Erstellt die Benachrichtigungseinstellungen (falls nicht vorhanden)
+        /setupnotify - Erstellt die Benachrichtigungs-Nachricht für Geburtstags-Benachrichtigungen
+
         """
             
         help_text += "\nBitte benutze das richtige Format für die Befehle!"
         await interaction.response.send_message(help_text)
 
     @bot.tree.command(name="setbirthday", description="Setzt deinen Geburtstag (Format: DD.MM.YYYY)")
-    @app_commands.describe(date="Dein Geburtsdatum im Format DD.MM.YYYY")
-    async def setbirthday(interaction: discord.Interaction, date: str):
+    @app_commands.describe(
+        date="Dein Geburtsdatum im Format DD.MM.YYYY",
+        firstname="Optional: Dein Vorname",
+        lastname="Optional: Dein Nachname"
+    )
+    async def setbirthday(
+        interaction: discord.Interaction,
+        date: str,
+        firstname: str = None,
+        lastname: str = None
+    ):
         try:
             birthday = datetime.strptime(date, '%d.%m.%Y')
             # Get display name if in a guild, otherwise use the username
-            display_name = (interaction.user.display_name 
-                          if isinstance(interaction.channel, discord.TextChannel) 
-                          else str(interaction.user))
+            base_name = (interaction.user.display_name 
+                      if isinstance(interaction.channel, discord.TextChannel) 
+                      else str(interaction.user))
+            
+            # Construct display name with optional first and last name
+            if firstname or lastname:
+                display_name = f"{firstname or ''} {lastname or ''}".strip()
+            else:
+                display_name = base_name
+                
             bot.db.add_birthday(interaction.user.id, display_name, birthday)
             await interaction.response.send_message(f"Geburtstag für {display_name} wurde auf {date} gesetzt!")
         except ValueError:
@@ -245,14 +294,10 @@ def main():
             
             response_lines = ["**📅 Anstehende Geburtstage:**"]
             for user_id, username, birthday, days_until in upcoming_birthdays:
-                age = now.year - birthday.year
-                if days_until > 0:  # Birthday is in the future
-                    age += 1  # Add 1 to age since it's their next birthday
-                
                 if days_until == 0:
-                    response_lines.append(f"🎉 **{username}** hat heute Geburtstag! ({age})")
+                    response_lines.append(f"🎉 **{username}** hat heute Geburtstag!")
                 else:
-                    response_lines.append(f"🎂 **{username}** wird in {days_until} Tagen {age} (am {birthday.strftime('%d.%m.')})")
+                    response_lines.append(f"🎂 **{username}** hat in {days_until} Tagen Geburtstag (am {birthday.strftime('%d.%m.')})")
             
             await interaction.response.send_message("\n".join(response_lines))
         else:
@@ -297,22 +342,125 @@ def main():
         if not birthdays:
             await interaction.followup.send("Heute hat niemand Geburtstag!", ephemeral=True)
             return
+
+        # Get all users who want notifications
+        notif_users = bot.db.get_users_with_dm_enabled()
             
         birthday_messages = []
         for user_id, username, birthday in birthdays:
-            age = now.year - birthday.year
             # Update display name if it has changed
             member = guild.get_member(user_id)
             display_name = member.display_name if member else username
             if member and display_name != username:
                 bot.db.add_birthday(user_id, display_name, birthday)
             
-            message = f"🎉 Alles Gute zum Geburtstag, {display_name}! 🎂"
+            # Extract firstname if available
+            firstname = username.split()[0] if ' ' in username else None
+            name_to_use = firstname or display_name
+            
+            # Construct message without age
+            message = f"🎉 Alles Gute zum Geburtstag, {name_to_use}"
+            if firstname and display_name != username:
+                message += f" ({display_name})"
+            message += "! 🎂"
+            
             birthday_messages.append(message)
             await channel.send(message)
+
+            # Notify opted-in users about the birthday
+            for notif_user_id, _, _ in notif_users:
+                if notif_user_id != user_id:  # Don't notify the birthday person
+                    try:
+                        notif_user = await bot.fetch_user(notif_user_id)
+                        if notif_user:
+                            await notif_user.send(f"🎂 {name_to_use} hat heute Geburtstag!")
+                    except (discord.errors.Forbidden, Exception):
+                        pass  # User has DMs disabled or other errors
         
         summary = f"Manuelle Geburtstagsüberprüfung abgeschlossen: {len(birthdays)} Geburtstage gefunden."
         await interaction.followup.send(summary, ephemeral=True)
+
+    @bot.tree.command(name="setbirthdayfor", description="Setzt den Geburtstag für einen anderen Benutzer")
+    @app_commands.describe(
+        username="Der Discord-Name oder Anzeigename des Benutzers",
+        date="Geburtsdatum im Format DD.MM.YYYY",
+        firstname="Optional: Vorname",
+        lastname="Optional: Nachname"
+    )
+    async def setbirthdayfor(
+        interaction: discord.Interaction,
+        username: str,
+        date: str,
+        firstname: str = None,
+        lastname: str = None
+    ):
+        try:
+            birthday = datetime.strptime(date, '%d.%m.%Y')
+        except ValueError:
+            await interaction.response.send_message("Bitte gib das Datum im Format DD.MM.YYYY ein!", ephemeral=True)
+            return
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("Dieser Befehl kann nur in einem Server-Kanal verwendet werden!", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        # Get all members for fuzzy matching
+        members = guild.members
+        best_match = None
+        best_score = 0
+
+        for member in members:
+            # Try matching against both username and display name
+            partial_score_username = fuzz.partial_ratio(username.lower(), member.name.lower())
+            partial_score_display = fuzz.partial_ratio(username.lower(), member.display_name.lower())
+            token_sort_score_username = fuzz.token_sort_ratio(username.lower(), member.name.lower())
+            token_sort_score_display = fuzz.token_sort_ratio(username.lower(), member.display_name.lower())
+            
+            best_member_score = max(partial_score_username, partial_score_display, 
+                                  token_sort_score_username, token_sort_score_display)
+            
+            if best_member_score > best_score:
+                best_score = best_member_score
+                best_match = member
+
+        if best_match and best_score > 60:  # Threshold for accepting a match
+            # Construct display name with optional first and last name
+            if firstname or lastname:
+                display_name = f"{firstname or ''} {lastname or ''}".strip()
+            else:
+                display_name = best_match.display_name
+
+            bot.db.add_birthday(best_match.id, display_name, birthday)
+            
+            confirmation = f"Geburtstag für {display_name} wurde auf {date} gesetzt!"
+            if best_score < 90:  # If match wasn't perfect, show the matched user for verification
+                confirmation += f"\n(Gefundener Benutzer: {best_match.display_name})"
+            
+            await interaction.response.send_message(confirmation)
+        else:
+            await interaction.response.send_message(f"Konnte keinen passenden Benutzer zu '{username}' finden.", ephemeral=True)
+
+    @bot.tree.command(name="setupnotify", description="Erstellt die Benachrichtigungs-Nachricht für Geburtstags-Benachrichtigungen")
+    async def setupnotify(interaction: discord.Interaction):
+        # Check if user has admin permissions
+        if not isinstance(interaction.channel, discord.TextChannel) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl auszuführen!", ephemeral=True)
+            return
+
+        channel = interaction.channel
+        # Look for existing notification message
+        async for message in channel.history(limit=100):
+            if message.author == bot.user and "Reagiere mit ✅" in message.content:
+                bot.notify_message_id = message.id
+                await interaction.response.send_message("Eine bestehende Benachrichtigungs-Nachricht wurde gefunden!", ephemeral=True)
+                return
+        
+        # If no message found, create one
+        message = await channel.send("🔔 Reagiere mit ✅ um Geburtstags-Benachrichtigungen zu erhalten!")
+        await message.add_reaction("✅")
+        bot.notify_message_id = message.id
+        await interaction.response.send_message("Die Benachrichtigungs-Nachricht wurde erfolgreich erstellt!", ephemeral=True)
 
     bot.run(load_config()['DISCORD']['TOKEN'])
 
