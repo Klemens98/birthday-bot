@@ -6,10 +6,22 @@ from datetime import datetime
 import pytz
 from database import DatabaseService
 from thefuzz import fuzz
+import logging
 
 def load_config():
     with open('config.yaml', 'r') as file:
         return yaml.safe_load(file)
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('birthday_bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('BirthdayBot')
 
 class BirthdayBot(discord.Client):
     def __init__(self):
@@ -30,32 +42,42 @@ class BirthdayBot(discord.Client):
         self.check_birthdays.start()
 
     async def on_raw_reaction_add(self, payload):
-        # Check if the reaction is to a message that contains the preference text
-        if str(payload.emoji) == "✅" and payload.user_id != self.user.id:
-            channel = self.get_channel(payload.channel_id)
-            if not channel:
-                return
-                
-            try:
-                message = await channel.fetch_message(payload.message_id)
-                if "Geburtstags-Benachrichtigungen" in message.content:
-                    self.db.update_dm_preference(payload.user_id, True)
-            except discord.NotFound:
-                pass
+        if payload.user_id == self.user.id:
+            return
+            
+        channel = self.get_channel(payload.channel_id)
+        if not channel:
+            logger.warning(f"Could not find channel for reaction: {payload.channel_id}")
+            return
+            
+        try:
+            message = await channel.fetch_message(payload.message_id)
+            if "Geburtstags-Benachrichtigungen" in message.content and str(payload.emoji) == "✅":
+                logger.info(f"User {payload.user_id} enabled DM notifications")
+                self.db.update_dm_preference(payload.user_id, True)
+        except discord.NotFound:
+            logger.error(f"Could not find message for reaction: {payload.message_id}")
+        except Exception as e:
+            logger.error(f"Error handling reaction add: {str(e)}")
 
     async def on_raw_reaction_remove(self, payload):
-        # Check if the reaction is to a message that contains the preference text
-        if str(payload.emoji) == "✅" and payload.user_id != self.user.id:
-            channel = self.get_channel(payload.channel_id)
-            if not channel:
-                return
-                
-            try:
-                message = await channel.fetch_message(payload.message_id)
-                if "Geburtstags-Benachrichtigungen" in message.content:
-                    self.db.update_dm_preference(payload.user_id, False)
-            except discord.NotFound:
-                pass
+        if payload.user_id == self.user.id:
+            return
+            
+        channel = self.get_channel(payload.channel_id)
+        if not channel:
+            logger.warning(f"Could not find channel for reaction removal: {payload.channel_id}")
+            return
+            
+        try:
+            message = await channel.fetch_message(payload.message_id)
+            if "Geburtstags-Benachrichtigungen" in message.content and str(payload.emoji) == "✅":
+                logger.info(f"User {payload.user_id} disabled DM notifications")
+                self.db.update_dm_preference(payload.user_id, False)
+        except discord.NotFound:
+            logger.error(f"Could not find message for reaction removal: {payload.message_id}")
+        except Exception as e:
+            logger.error(f"Error handling reaction remove: {str(e)}")
 
     async def on_ready(self):
         print(f'Logged in as {self.user}')
@@ -67,16 +89,24 @@ class BirthdayBot(discord.Client):
             # Also sync globally
             await self.tree.sync()
             print(f'Successfully synced application commands')
+
+            # Check DM preferences on startup
+            for guild in self.guilds:
+                for channel in guild.text_channels:
+                    try:
+                        async for message in channel.history(limit=100):
+                            if message.author == self.user and "Geburtstags-Benachrichtigungen" in message.content:
+                                for reaction in message.reactions:
+                                    if str(reaction.emoji) == "✅":
+                                        async for user in reaction.users():
+                                            if user != self.user:
+                                                self.db.update_dm_preference(user.id, True)
+                                                logger.info(f"Updated DM preference for user {user.id} on startup")
+                    except (discord.Forbidden, discord.HTTPException) as e:
+                        logger.error(f"Error checking channel {channel.id}: {e}")
+
         except Exception as e:
-            print(f'Failed to sync application commands: {e}')
-
-    async def on_raw_reaction_add(self, payload):
-        if payload.message_id == self.notify_message_id and str(payload.emoji) == "✅":
-            self.db.update_dm_preference(payload.user_id, True)
-
-    async def on_raw_reaction_remove(self, payload):
-        if payload.message_id == self.notify_message_id and str(payload.emoji) == "✅":
-            self.db.update_dm_preference(payload.user_id, False)
+            print(f'Failed to sync application commands or check DM preferences: {e}')
 
     @tasks.loop(hours=24)
     async def check_birthdays(self):
