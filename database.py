@@ -26,7 +26,7 @@ class DatabaseService:
             self.conn = psycopg2.connect(
                 dbname=db_config['NAME'],
                 user=db_config['USER'],
-                password='********',  # Password hidden in logs
+                password=db_config['PASSWORD'],  # Use actual password from config
                 host=db_config['HOST'],
                 port=db_config['PORT']
             )
