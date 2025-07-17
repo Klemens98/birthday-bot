@@ -1,6 +1,7 @@
 """Database service module for managing PostgreSQL database operations."""
 import logging
 from datetime import datetime
+from typing import Optional
 import psycopg2
 from psycopg2.extras import DictCursor
 from config.config_manager import ConfigManager
@@ -48,8 +49,55 @@ class DatabaseService:
                 """)
                 logger.info(f"Database table {self.table_name} initialized")
 
+    def get_upcoming_birthdays(self, limit: int = 5):
+        """Get upcoming birthdays ordered by date.
+        
+        Args:
+            limit (int): Maximum number of birthdays to return
+            
+        Returns:
+            list: List of tuples (user_id, username, firstname, lastname, birthday, dm_preference)
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Querying upcoming {limit} birthdays from table: {self.table_name}")
+                cur.execute(f"""
+                    WITH birthday_this_year AS (
+                        SELECT 
+                            user_id, 
+                            username, 
+                            firstname, 
+                            lastname, 
+                            birthday,
+                            dm_preference,
+                            DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                                 LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
+                                 LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0')) as this_year_birthday,
+                            CASE 
+                                WHEN DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                                         LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
+                                         LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0')) >= CURRENT_DATE
+                                THEN DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                                         LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
+                                         LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0'))
+                                ELSE DATE((EXTRACT(YEAR FROM CURRENT_DATE) + 1) || '-' || 
+                                         LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
+                                         LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0'))
+                            END as next_birthday
+                        FROM {self.table_name} 
+                        WHERE birthday IS NOT NULL
+                    )
+                    SELECT user_id, username, firstname, lastname, birthday, dm_preference
+                    FROM birthday_this_year
+                    ORDER BY next_birthday ASC
+                    LIMIT %s
+                """, (limit,))
+                results = cur.fetchall()
+                logger.info(f"Found {len(results)} upcoming birthdays")
+                return results
+
     def set_birthday(self, user_id: int, username: str, birthday: datetime, 
-                    firstname: str = None, lastname: str = None, 
+                    firstname: Optional[str] = None, lastname: Optional[str] = None, 
                     dm_enabled: bool = False):
         """Add or update a birthday entry.
         
