@@ -1,51 +1,144 @@
-# Discord Birthday Bot
+# Birthday Bot
 
-A Discord bot that helps manage and celebrate birthdays in your server.
+A Discord bot that manages and announces birthdays, with support for DM notifications and multiple users.
+
+## Project Structure
+
+```
+birthday-bot/
+├── services/           # Core business logic
+│   ├── birthday_service.py    # Birthday processing logic
+│   └── notification_service.py # Notification handling
+├── handlers/           # Discord event and command handlers
+│   ├── command_handler.py     # Slash command handling
+│   └── event_handler.py       # Discord event handling
+├── utils/             # Utility functions
+│   ├── date_utils.py         # Date manipulation utilities
+│   └── message_utils.py      # Message formatting utilities
+├── config/            # Configuration management
+│   └── config_manager.py     # Config loading and access
+├── tests/             # Test modules
+│   ├── conftest.py           # Test configuration
+│   ├── test_birthday_service.py
+│   ├── test_notification_service.py
+│   ├── test_config_manager.py
+│   ├── test_date_utils.py
+│   └── test_message_utils.py
+├── database.py        # Database operations
+├── birthday_bot.py    # Main bot implementation
+├── config.yaml        # Bot configuration
+├── requirements.txt   # Production dependencies
+└── dev-requirements.txt # Development dependencies
+```
 
 ## Features
 
-- Store and track server members' birthdays
-- Send birthday announcements in designated channels
-- Allow users to set and update their own birthdays
-- View upcoming birthdays
+- Birthday tracking and announcements
+- DM notifications for birthdays
+- Slash command interface
+- Timezone support (default: Europe/Berlin)
+- First and last name support
+- Admin commands for manual checks
 
 ## Setup
 
-1. Clone the repository
+1. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
+```
+
 2. Install dependencies:
 ```bash
-npm install
+pip install -r requirements.txt
 ```
-3. Create a `config.yaml` file with your configuration:
+
+3. Create `config.yaml`:
 ```yaml
 DISCORD:
-  TOKEN: your_token_here
-  CHANNEL_ID: your_channel_id_here  # Replace with your channel ID
-  APPLICATION_ID: your_application_id_here
+  TOKEN: "your-bot-token"
+  APPLICATION_ID: "your-app-id"
+  CHANNEL_ID: "your-channel-id"
+TIMEZONE: "Europe/Berlin"
+```
 
-DATABASE:
-  NAME: default
-  HOST: localhost
-  PORT: 5432
-  USER: your_db_user
-  PASSWORD: your_db_password
-```
-4. Start the bot:
+4. Run the bot:
 ```bash
-npm start
+python birthday_bot.py
 ```
+
+## Development Setup
+
+1. Install development dependencies:
+```bash
+pip install -r dev-requirements.txt
+```
+
+2. Set up pre-commit hooks:
+```bash
+pre-commit install
+```
+
+3. Run tests:
+```bash
+pytest tests/
+```
+
+The project uses several code quality tools:
+- Black for code formatting
+- Flake8 for linting
+- isort for import sorting
+- pre-commit hooks for automated checks
 
 ## Commands
 
-- `/setbirthday` - Set your birthday
-- `/birthday` - View someone's birthday
-- `/upcoming` - List upcoming birthdays
-- `/settings` - Configure bot settings (Admin only)
+### User Commands
+- `/help` - Display available commands
+- `/setbirthday DD.MM.YYYY [firstname] [lastname]` - Set your birthday
+- `/setbirthdayfor username DD.MM.YYYY [firstname] [lastname]` - Set someone's birthday
+- `/nextbirthday [username]` - Show next birthday
+- `/upcoming` - Show next 5 birthdays
 
-## Contributing
+### Admin Commands
+- `/birthdaycheck` - Manual birthday check
+- `/setupnotify` - Create notification opt-in message
 
-Feel free to open issues or submit pull requests with improvements.
+## Development
+
+### Testing
+Run tests with pytest:
+```bash
+pytest tests/
+```
+
+### Continuous Integration
+The project uses GitHub Actions for:
+- Running tests on Python 3.9, 3.10, and 3.11
+- Automated testing on push and pull requests
+- Code quality checks
+
+### Project Components
+
+1. **Services**:
+   - `BirthdayService`: Handles birthday processing and announcements
+   - `NotificationService`: Manages DM notifications and preferences
+
+2. **Handlers**:
+   - `CommandHandler`: Processes slash commands
+   - `EventHandler`: Handles Discord events
+
+3. **Utilities**:
+   - `date_utils.py`: Date manipulation functions
+   - `message_utils.py`: Message formatting
+
+4. **Configuration**:
+   - `ConfigManager`: Loads and manages bot configuration
+
+5. **Database**:
+   - SQLite-based storage
+   - Stores user birthdays and preferences
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License

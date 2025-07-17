@@ -1,222 +1,145 @@
-import psycopg2
-import yaml
-from datetime import datetime
-import pytz
+"""Database service module for managing PostgreSQL database operations."""
 import logging
+from datetime import datetime
+import psycopg2
+from psycopg2.extras import DictCursor
+from config.config_manager import ConfigManager
 
-logger = logging.getLogger('DatabaseService')
-
-def load_config():
-    logger.debug("Loading configuration from config.yaml")
-    try:
-        with open('config.yaml', 'r') as file:
-            config = yaml.safe_load(file)
-            logger.debug("Configuration loaded successfully")
-            return config
-    except Exception as e:
-        logger.error(f"Failed to load configuration: {e}")
-        raise
+logger = logging.getLogger('BirthdayBot.DatabaseService')
 
 class DatabaseService:
     def __init__(self):
-        logger.info("Initializing DatabaseService")
-        try:
-            config = load_config()
-            db_config = config['DATABASE']
-            self.conn = psycopg2.connect(
-                dbname=db_config['NAME'],
-                user=db_config['USER'],
-                password=db_config['PASSWORD'],  # Use actual password from config
-                host=db_config['HOST'],
-                port=db_config['PORT']
-            )
-            logger.info(f"Connected to database {db_config['NAME']} at {db_config['HOST']}")
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {e}")
-            raise
+        """Initialize the database service with PostgreSQL connection."""
+        self.config = ConfigManager()
+        self.table_name = self.config._config.get('DATABASE', {}).get('TABLE_NAME', 'birthdays')
+        logger.info(f"Initializing DatabaseService with table: {self.table_name}")
+        self._setup_database()
 
-    def get_todays_birthdays(self):
-        tz = pytz.timezone('Europe/Berlin')
-        now = datetime.now(tz)
-        logger.info(f"Fetching birthdays for today ({now.strftime('%d.%m.%Y')})")
+    def _get_connection(self):
+        """Create a new database connection.
         
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT user_id, username, firstname, lastname, birthday, dm_preference 
-                    FROM birthdays 
-                    WHERE EXTRACT(MONTH FROM birthday) = %s 
-                    AND EXTRACT(DAY FROM birthday) = %s
-                """, (now.month, now.day))
-                results = cur.fetchall()
-                logger.info(f"Found {len(results)} birthdays for today")
-                logger.debug(f"Birthday results: {results}")
-                return results
-        except Exception as e:
-            logger.error(f"Error fetching today's birthdays: {e}")
-            raise
+        Returns:
+            psycopg2.connection: Database connection
+        """
+        db_config = self.config._config['DATABASE']
+        logger.info(f"Connecting to database: {db_config['NAME']} with table: {self.table_name}")
+        return psycopg2.connect(
+            dbname=db_config['NAME'],
+            user=db_config['USER'],
+            password=db_config['PASSWORD'],
+            host=db_config['HOST'],
+            port=db_config['PORT']
+        )
 
-    def add_birthday(self, user_id: int, username: str, birthday: datetime, firstname: str = None, lastname: str = None, dm_preference: bool = False):
-        logger.info(f"Adding/updating birthday for user {username} (ID: {user_id})")
-        logger.debug(f"Details - Birthday: {birthday}, Firstname: {firstname}, Lastname: {lastname}, DM Preference: {dm_preference}")
+    def _setup_database(self):
+        """Set up the database tables if they don't exist."""
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                # Create birthdays table if it doesn't exist
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.table_name} (
+                        user_id BIGINT PRIMARY KEY,
+                        username VARCHAR(255) NOT NULL,
+                        birthday DATE,
+                        firstname VARCHAR(255),
+                        lastname VARCHAR(255),
+                        dm_preference BOOLEAN DEFAULT FALSE
+                    )
+                """)
+                logger.info(f"Database table {self.table_name} initialized")
+
+    def set_birthday(self, user_id: int, username: str, birthday: datetime, 
+                    firstname: str = None, lastname: str = None, 
+                    dm_enabled: bool = False):
+        """Add or update a birthday entry.
         
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO birthdays (user_id, username, firstname, lastname, birthday, dm_preference)
+        Args:
+            user_id (int): Discord user ID
+            username (str): Discord username
+            birthday (datetime): User's birthday
+            firstname (str, optional): User's first name
+            lastname (str, optional): User's last name
+            dm_enabled (bool, optional): Whether user wants DM notifications
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Adding/updating birthday for user {user_id} in table: {self.table_name}")
+                cur.execute(f"""
+                    INSERT INTO {self.table_name} 
+                        (user_id, username, birthday, firstname, lastname, dm_preference)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (user_id) DO UPDATE 
-                    SET username = EXCLUDED.username,
+                    ON CONFLICT (user_id) 
+                    DO UPDATE SET 
+                        username = EXCLUDED.username,
+                        birthday = EXCLUDED.birthday,
                         firstname = EXCLUDED.firstname,
                         lastname = EXCLUDED.lastname,
-                        birthday = EXCLUDED.birthday,
                         dm_preference = EXCLUDED.dm_preference
-                """, (user_id, username, firstname, lastname, birthday, dm_preference))
-                self.conn.commit()
-                logger.info(f"Successfully saved birthday data for user {username}")
-        except Exception as e:
-            logger.error(f"Error saving birthday for user {username}: {e}")
-            self.conn.rollback()
-            raise
+                """, (user_id, username, birthday.date(), firstname, lastname, dm_enabled))
+                logger.info(f"Birthday saved for user {username} (ID: {user_id})")
 
-    def update_dm_preference(self, user_id: int, dm_preference: bool):
-        logger.info(f"Updating DM preference for user {user_id} to {dm_preference}")
+    def get_todays_birthdays(self):
+        """Get all birthdays for today.
         
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO birthdays (user_id, dm_preference)
-                    VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO UPDATE 
-                    SET dm_preference = EXCLUDED.dm_preference
-                """, (user_id, dm_preference))
-                self.conn.commit()
-                logger.info(f"Successfully updated DM preference for user {user_id}")
-        except Exception as e:
-            logger.error(f"Error updating DM preference for user {user_id}: {e}")
-            self.conn.rollback()
-            raise
-
-    def get_users_with_dm_enabled(self):
-        logger.info("Fetching users with DM notifications enabled")
-        
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT user_id, username, firstname, lastname, birthday
-                    FROM birthdays
-                    WHERE dm_preference = TRUE
+        Returns:
+            list: List of tuples (user_id, username, firstname, lastname, birthday, dm_preference)
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Querying today's birthdays from table: {self.table_name}")
+                cur.execute(f"""
+                    SELECT user_id, username, firstname, lastname, birthday, dm_preference 
+                    FROM {self.table_name} 
+                    WHERE DATE_TRUNC('day', birthday) = DATE_TRUNC('day', CURRENT_DATE)
                 """)
                 results = cur.fetchall()
-                logger.info(f"Found {len(results)} users with DM notifications enabled")
-                logger.debug(f"DM enabled users: {results}")
+                logger.info(f"Found {len(results)} birthdays for today")
                 return results
-        except Exception as e:
-            logger.error(f"Error fetching users with DM enabled: {e}")
-            raise
 
-    def get_next_birthday(self):
-        tz = pytz.timezone('Europe/Berlin')
-        now = datetime.now(tz)
-        logger.info("Fetching next upcoming birthday")
+    def get_users_with_dm_enabled(self):
+        """Get all users who have DM notifications enabled.
         
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT user_id, username, firstname, lastname, birthday
-                    FROM birthdays
-                    WHERE (EXTRACT(MONTH FROM birthday), EXTRACT(DAY FROM birthday)) >= 
-                          (%s, %s)
-                    ORDER BY EXTRACT(MONTH FROM birthday), EXTRACT(DAY FROM birthday)
-                    LIMIT 1
-                """, (now.month, now.day))
-                result = cur.fetchone()
-                if result:
-                    logger.info(f"Next birthday found: {result[1]} on {result[4]}")
-                else:
-                    logger.info("No upcoming birthdays found")
-                return result
-        except Exception as e:
-            logger.error(f"Error fetching next birthday: {e}")
-            raise
-
-    def search_birthday_by_username(self, search_term: str):
-        logger.info(f"Searching birthdays for username containing: {search_term}")
-        
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT user_id, username, firstname, lastname, birthday
-                    FROM birthdays
-                    WHERE LOWER(username) LIKE LOWER(%s)
-                    ORDER BY username
-                """, (f'%{search_term}%',))
+        Returns:
+            list: List of tuples (user_id,)
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Querying users with DM enabled from table: {self.table_name}")
+                cur.execute(f"SELECT user_id FROM {self.table_name} WHERE dm_preference = TRUE")
                 results = cur.fetchall()
-                logger.info(f"Found {len(results)} matches for search term '{search_term}'")
-                logger.debug(f"Search results: {results}")
+                logger.info(f"Found {len(results)} users with DM enabled")
                 return results
-        except Exception as e:
-            logger.error(f"Error searching birthdays by username: {e}")
-            raise
 
-    def get_upcoming_birthdays(self, limit=5):
-        logger.info(f"Fetching next {limit} upcoming birthdays")
+    def update_dm_preference(self, user_id: int, enabled: bool):
+        """Update DM notification preference for a user.
         
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    WITH next_birthday AS (
-                        SELECT 
-                            user_id,
-                            username,
-                            firstname,
-                            lastname,
-                            birthday,
-                            CASE 
-                                WHEN (DATE_PART('month', birthday), DATE_PART('day', birthday)) >= 
-                                     (DATE_PART('month', CURRENT_DATE), DATE_PART('day', CURRENT_DATE))
-                                THEN DATE(MAKE_DATE(DATE_PART('year', CURRENT_DATE)::INTEGER, 
-                                                  DATE_PART('month', birthday)::INTEGER, 
-                                                  DATE_PART('day', birthday)::INTEGER))
-                                ELSE DATE(MAKE_DATE(DATE_PART('year', CURRENT_DATE)::INTEGER + 1, 
-                                                  DATE_PART('month', birthday)::INTEGER, 
-                                                  DATE_PART('day', birthday)::INTEGER))
-                            END as next_occurrence
-                        FROM birthdays
-                    )
-                    SELECT 
-                        user_id,
-                        username,
-                        firstname,
-                        lastname,
-                        birthday,
-                        (next_occurrence - CURRENT_DATE) as days_until
-                    FROM next_birthday
-                    ORDER BY days_until ASC
-                    LIMIT %s
-                """, (limit,))
-                results = cur.fetchall()
-                logger.info(f"Found {len(results)} upcoming birthdays")
-                logger.debug(f"Upcoming birthdays: {results}")
-                return results
-        except Exception as e:
-            logger.error(f"Error fetching upcoming birthdays: {e}")
-            raise
-
-    def get_dm_preference(self, user_id: int) -> bool:
-        logger.info(f"Fetching DM preference for user {user_id}")
-        
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT dm_preference
-                    FROM birthdays
+        Args:
+            user_id (int): Discord user ID
+            enabled (bool): Whether to enable DM notifications
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Updating DM preference for user {user_id} in table: {self.table_name}")
+                cur.execute(f"""
+                    UPDATE {self.table_name} 
+                    SET dm_preference = %s 
                     WHERE user_id = %s
-                """, (user_id,))
-                result = cur.fetchone()
-                preference = result[0] if result else False
-                logger.info(f"DM preference for user {user_id}: {preference}")
-                return preference
-        except Exception as e:
-            logger.error(f"Error fetching DM preference for user {user_id}: {e}")
-            raise
+                """, (enabled, user_id))
+                logger.info(f"Updated DM preference for user {user_id} to {enabled}")
+
+    def update_username(self, user_id: int, username: str):
+        """Update only the username for a user.
+        
+        Args:
+            user_id (int): Discord user ID
+            username (str): New username
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Updating username for user {user_id} in table: {self.table_name}")
+                cur.execute(f"""
+                    UPDATE {self.table_name} 
+                    SET username = %s 
+                    WHERE user_id = %s
+                """, (username, user_id))
+                logger.info(f"Updated username for user {user_id} to {username}")
