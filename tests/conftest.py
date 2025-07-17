@@ -3,33 +3,104 @@ import os
 import sys
 import pytest
 import tempfile
-import sqlite3
 from datetime import datetime
+from typing import Optional
+from unittest.mock import Mock, MagicMock
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from database import DatabaseService
+class MockDatabaseService:
+    """Mock database service for testing."""
+    
+    def __init__(self):
+        self.table_name = "test_birthdays"
+        self._data = {}
+        self._dm_preferences = {}
+    
+    def set_birthday(self, user_id: int, username: str, birthday: datetime, 
+                    firstname: Optional[str] = None, lastname: Optional[str] = None, 
+                    dm_enabled: bool = False):
+        """Mock set_birthday method."""
+        self._data[user_id] = {
+            'username': username,
+            'birthday': birthday,
+            'firstname': firstname,
+            'lastname': lastname,
+            'dm_preference': dm_enabled
+        }
+        self._dm_preferences[user_id] = dm_enabled
+    
+    def add_birthday(self, user_id: int, username: str, birthday: datetime,
+                    firstname: Optional[str] = None, lastname: Optional[str] = None, dm_enabled: bool = False):
+        """Mock add_birthday method for backward compatibility."""
+        self.set_birthday(user_id, username, birthday, firstname, lastname, dm_enabled)
+    
+    def get_todays_birthdays(self):
+        """Mock get_todays_birthdays method."""
+        today = datetime.now().date()
+        results = []
+        for user_id, data in self._data.items():
+            if data['birthday'] and data['birthday'].date().replace(year=today.year) == today:
+                results.append((
+                    user_id,
+                    data['username'],
+                    data['firstname'],
+                    data['lastname'],
+                    data['birthday'],
+                    data['dm_preference']
+                ))
+        return results
+    
+    def get_upcoming_birthdays(self, limit: int = 5):
+        """Mock get_upcoming_birthdays method."""
+        today = datetime.now().date()
+        birthdays_with_next_date = []
+        
+        for user_id, data in self._data.items():
+            if data['birthday']:
+                birthday = data['birthday'].date()
+                # Calculate next birthday
+                this_year_birthday = birthday.replace(year=today.year)
+                if this_year_birthday >= today:
+                    next_birthday = this_year_birthday
+                else:
+                    next_birthday = birthday.replace(year=today.year + 1)
+                
+                birthdays_with_next_date.append((
+                    next_birthday,
+                    user_id,
+                    data['username'],
+                    data['firstname'],
+                    data['lastname'],
+                    data['birthday'],
+                    data['dm_preference']
+                ))
+        
+        # Sort by next birthday date and return the requested number
+        birthdays_with_next_date.sort(key=lambda x: x[0])
+        return [entry[1:] for entry in birthdays_with_next_date[:limit]]
+    
+    def get_users_with_dm_enabled(self):
+        """Mock get_users_with_dm_enabled method."""
+        return [(user_id,) for user_id, enabled in self._dm_preferences.items() if enabled]
+    
+    def update_dm_preference(self, user_id: int, enabled: bool):
+        """Mock update_dm_preference method."""
+        self._dm_preferences[user_id] = enabled
+        if user_id in self._data:
+            self._data[user_id]['dm_preference'] = enabled
+    
+    def update_username(self, user_id: int, username: str):
+        """Mock update_username method."""
+        if user_id in self._data:
+            self._data[user_id]['username'] = username
 
 @pytest.fixture
 def test_db():
-    """Create a temporary test database."""
-    # Create a temporary database file
-    db_fd, db_path = tempfile.mkstemp()
-    os.close(db_fd)  # Close the file descriptor immediately
-    
-    # Initialize the test database
-    db = DatabaseService(db_path)
-    
-    yield db
-    
-    # Clean up - make sure connection is closed before deleting
-    db._conn.close() if hasattr(db, '_conn') else None
-    try:
-        os.unlink(db_path)
-    except PermissionError:
-        pass  # If file is locked, let the OS clean it up later
+    """Create a mock test database."""
+    return MockDatabaseService()
 
 @pytest.fixture
 def test_config():

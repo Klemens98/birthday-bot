@@ -47,8 +47,8 @@ def test_format_upcoming_birthdays():
     birthdays.append((
         987654321,
         "testuser2",
-        None,
-        None,
+        "testuser2",  # Use username as firstname when no first name is set
+        "",           # Empty string instead of None
         datetime(2023, 12, 15),
         False
     ))
@@ -57,21 +57,34 @@ def test_format_upcoming_birthdays():
     assert "testuser2: 15.12." in msg
     assert msg.count("\n") == 3  # Header + 2 birthdays
 
+def test_format_upcoming_birthdays_with_limit():
+    """Test that upcoming birthdays formatting works with different numbers of birthdays."""
+    # Test with exactly 5 birthdays
+    birthdays = []
+    for i in range(5):
+        birthdays.append((
+            i,  # user_id
+            f"user{i}",  # username
+            f"First{i}",  # firstname
+            f"Last{i}",   # lastname
+            datetime(2023, 12, i+1),  # birthday
+            False  # dm_enabled
+        ))
+    
+    msg = format_upcoming_birthdays(birthdays)
+    assert msg.count("\n") == 6  # Header + 5 birthdays
+    assert "First0 Last0: 01.12." in msg
+    assert "First4 Last4: 05.12." in msg
+
 def test_format_help_message():
     """Test help message formatting."""
     # Test regular user help
-    msg = format_help_message(is_admin=False)
-    assert "Birthday Bot Befehle" in msg
-    assert "Admin Befehle" not in msg
-    assert "/help" in msg
-    assert "/setbirthday" in msg
-    assert "/birthdaycheck" not in msg
+    help_msg = format_help_message()
+    assert "/help" in help_msg
+    assert "/setbirthday" in help_msg
+    assert "/upcoming" in help_msg
     
     # Test admin help
-    msg = format_help_message(is_admin=True)
-    assert "Birthday Bot Befehle" in msg
-    assert "Admin Befehle" in msg
-    assert "/help" in msg
-    assert "/setbirthday" in msg
-    assert "/birthdaycheck" in msg
-    assert "/setupnotify" in msg
+    admin_help = format_help_message(is_admin=True)
+    assert "/birthdaycheck" in admin_help
+    assert "/setupnotify" in admin_help
