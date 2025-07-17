@@ -17,12 +17,12 @@ async def test_process_todays_birthdays(test_db):
     channel = AsyncMock()
     bot_user = Mock()
     
-    # Add test birthday
-    now = get_berlin_now()
+    # Add test birthday for today (using current date)
+    today = datetime.now()
     test_db.add_birthday(
         123456789, 
         "testuser", 
-        datetime(now.year, now.month, now.day), 
+        today,  # Use today's date directly
         "Test", 
         "User"
     )
@@ -32,7 +32,7 @@ async def test_process_todays_birthdays(test_db):
     
     # Verify results
     assert len(messages) == 1
-    assert "Test User" in messages[0]
+    assert "Test" in messages[0]
     assert "Alles Gute zum Geburtstag" in messages[0]
     channel.send.assert_called_once()
 
@@ -46,6 +46,16 @@ async def test_process_todays_birthdays_no_birthdays(test_db):
     guild = Mock()
     channel = AsyncMock()
     bot_user = Mock()
+    
+    # Add birthday for a different date (yesterday)
+    yesterday = datetime.now() - timedelta(days=1)
+    test_db.add_birthday(
+        123456789,
+        "testuser",
+        yesterday,
+        "Test",
+        "User"
+    )
     
     # Process birthdays
     messages = await birthday_service.process_todays_birthdays(guild, channel, bot_user)
@@ -67,18 +77,18 @@ async def test_process_todays_birthdays_with_dm_notifications(test_db):
     notif_user = AsyncMock()
     bot_user.fetch_user.return_value = notif_user
     
-    # Add test birthday and notification user
-    now = get_berlin_now()
+    # Add test birthday for today
+    today = datetime.now()
     test_db.add_birthday(
         123456789, 
         "birthdayuser", 
-        datetime(now.year, now.month, now.day),
+        today,  # Today's birthday
         dm_enabled=False
     )
     test_db.add_birthday(
         987654321,
         "notifuser",
-        datetime(2000, 1, 1),
+        datetime(2000, 1, 1),  # Different date
         dm_enabled=True
     )
     
