@@ -1,12 +1,14 @@
 """Command handler module for managing Discord slash commands."""
 import logging
 from datetime import datetime
+from typing import Optional
 from discord import app_commands
 import discord
 from thefuzz import fuzz
 from database import DatabaseService
 from services.birthday_service import BirthdayService
 from services.notification_service import NotificationService
+from utils.message_utils import format_upcoming_birthdays
 
 logger = logging.getLogger('BirthdayBot.CommandHandler')
 
@@ -38,11 +40,13 @@ class CommandHandler:
                 "**Geburtstags-Bot Hilfe**\n\n"
                 "**Befehle:**\n"
                 "`/setbirthday` - Setze deinen Geburtstag (Format: DD.MM.YYYY)\n"
+                "`/upcoming` - Zeige die nächsten 5 anstehenden Geburtstage\n"
                 "`/help` - Zeige diese Hilfe an\n\n"
                 "**Wie funktioniert's?**\n"
                 "1. Reagiere mit ✅ auf die Nachricht im Geburtstags-Kanal um Benachrichtigungen zu erhalten\n"
                 "2. Setze deinen Geburtstag mit `/setbirthday`\n"
-                "3. Erhalte Benachrichtigungen wenn jemand Geburtstag hat!\n\n"
+                "3. Erhalte Benachrichtigungen wenn jemand Geburtstag hat!\n"
+                "4. Nutze `/upcoming` um zu sehen, wer als nächstes Geburtstag hat\n\n"
                 "**Hinweis:** Benachrichtigungen werden nur an Benutzer gesendet, die mit ✅ reagiert haben."
             )
             await interaction.response.send_message(help_text, ephemeral=True)
@@ -54,7 +58,7 @@ class CommandHandler:
             lastname="Optional: Dein Nachname"
         )
         async def setbirthday(interaction: discord.Interaction, date: str, 
-                            firstname: str = None, lastname: str = None):
+                            firstname: Optional[str] = None, lastname: Optional[str] = None):
             """Set a user's birthday."""
             logger.info(f"Setbirthday command used by {interaction.user.name}")
             try:
@@ -104,7 +108,7 @@ class CommandHandler:
             logger.info(f"Birthdaycheck command used by {interaction.user.name}")
             
             # Check if user has admin permissions
-            if not interaction.user.guild_permissions.administrator:
+            if not interaction.user.guild_permissions.administrator:  # type: ignore
                 await interaction.response.send_message(
                     "Du hast keine Berechtigung, diesen Befehl auszuführen!",
                     ephemeral=True
@@ -115,7 +119,7 @@ class CommandHandler:
             await interaction.response.defer(ephemeral=True)
             
             try:
-                channel = interaction.client.get_channel(interaction.client.config.channel_id)
+                channel = interaction.client.get_channel(interaction.client.config.channel_id)  # type: ignore
                 if not channel:
                     await interaction.followup.send(
                         "Konnte den Geburtstags-Kanal nicht finden!",
@@ -123,7 +127,7 @@ class CommandHandler:
                     )
                     return
                 
-                await interaction.client.birthday_service.process_todays_birthdays(
+                await interaction.client.birthday_service.process_todays_birthdays(  # type: ignore
                     interaction.guild, channel, interaction.client.user)
                 
                 await interaction.followup.send(
@@ -143,7 +147,7 @@ class CommandHandler:
             logger.info(f"testdmall command used by {interaction.user.name}")
             
             # Check if user has admin permissions or is server owner
-            if not (interaction.user.guild_permissions.administrator or interaction.user.id == interaction.guild.owner_id):
+            if not (interaction.user.guild_permissions.administrator or interaction.user.id == interaction.guild.owner_id):  # type: ignore
                 await interaction.response.send_message(
                     "Du hast keine Berechtigung, diesen Befehl auszuführen!",
                     ephemeral=True
@@ -155,11 +159,11 @@ class CommandHandler:
             
             try:
                 # Log which table we're using
-                table_name = interaction.client.db.table_name
+                table_name = interaction.client.db.table_name  # type: ignore
                 logger.info(f"Using table {table_name} for testdmall command")
                 
                 # Get users with DM enabled
-                users_with_dm = interaction.client.db.get_users_with_dm_enabled()
+                users_with_dm = interaction.client.db.get_users_with_dm_enabled()  # type: ignore
                 logger.info(f"Found {len(users_with_dm)} users with DM enabled in table {table_name}")
                 
                 if not users_with_dm:
@@ -169,7 +173,7 @@ class CommandHandler:
                     )
                     return
                 
-                success_count, failure_count = await interaction.client.notification_service.send_test_dms_to_all(interaction.guild)
+                success_count, failure_count = await interaction.client.notification_service.send_test_dms_to_all(interaction.guild)  # type: ignore
                 
                 # Send summary message
                 await interaction.followup.send(
@@ -182,6 +186,27 @@ class CommandHandler:
                 logger.error(f"Error in testdmall command: {e}")
                 await interaction.followup.send(
                     "Ein Fehler ist beim Senden der Test-DMs aufgetreten.",
+                    ephemeral=True
+                )
+
+        @self.tree.command(name="upcoming", description="Zeigt die nächsten 5 anstehenden Geburtstage")
+        async def upcoming(interaction: discord.Interaction):
+            """Show the next 5 upcoming birthdays."""
+            logger.info(f"Upcoming command used by {interaction.user.name}")
+            try:
+                # Get upcoming birthdays from database
+                upcoming_birthdays = self.db.get_upcoming_birthdays(5)
+                
+                # Format the message
+                message = format_upcoming_birthdays(upcoming_birthdays)
+                
+                # Send response (ephemeral so only the user can see it)
+                await interaction.response.send_message(message, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in upcoming command: {e}")
+                await interaction.response.send_message(
+                    "Ein Fehler ist aufgetreten beim Abrufen der anstehenden Geburtstage.",
                     ephemeral=True
                 )
 
