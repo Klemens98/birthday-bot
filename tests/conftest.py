@@ -42,15 +42,18 @@ class MockDatabaseService:
         today = datetime.now().date()
         results = []
         for user_id, data in self._data.items():
-            if data['birthday'] and data['birthday'].date().replace(year=today.year) == today:
-                results.append((
-                    user_id,
-                    data['username'],
-                    data['firstname'],
-                    data['lastname'],
-                    data['birthday'],
-                    data['dm_preference']
-                ))
+            if data['birthday']:
+                birthday_date = data['birthday'].date()
+                # Check if birthday (month and day) matches today
+                if birthday_date.month == today.month and birthday_date.day == today.day:
+                    results.append((
+                        user_id,
+                        data['username'],
+                        data['firstname'],
+                        data['lastname'],
+                        data['birthday'],
+                        data['dm_preference']
+                    ))
         return results
     
     def get_upcoming_birthdays(self, limit: int = 5):
