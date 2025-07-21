@@ -191,3 +191,21 @@ class DatabaseService:
                     WHERE user_id = %s
                 """, (username, user_id))
                 logger.info(f"Updated username for user {user_id} to {username}")
+
+    def get_all_users(self):
+        """Get all users from the database for fuzzy matching.
+        
+        Returns:
+            list: List of tuples (user_id, username, firstname, lastname)
+        """
+        with self._get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info(f"Querying all users from table: {self.table_name}")
+                cur.execute(f"""
+                    SELECT user_id, username, firstname, lastname 
+                    FROM {self.table_name}
+                    ORDER BY username
+                """)
+                results = cur.fetchall()
+                logger.info(f"Found {len(results)} users in database")
+                return results

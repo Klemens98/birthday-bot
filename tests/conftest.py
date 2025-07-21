@@ -85,6 +85,20 @@ class MockDatabaseService:
         birthdays_with_next_date.sort(key=lambda x: x[0])
         return [entry[1:] for entry in birthdays_with_next_date[:limit]]
     
+    def get_all_users(self):
+        """Mock get_all_users method."""
+        users = []
+        for user_id, data in self._data.items():
+            users.append((
+                user_id,
+                data['username'],
+                data['firstname'],
+                data['lastname']
+            ))
+        # Sort by username to match the real implementation
+        users.sort(key=lambda x: x[1])
+        return users
+    
     def get_users_with_dm_enabled(self):
         """Mock get_users_with_dm_enabled method."""
         return [(user_id,) for user_id, enabled in self._dm_preferences.items() if enabled]
