@@ -40,13 +40,15 @@ class CommandHandler:
                 "**Geburtstags-Bot Hilfe**\n\n"
                 "**Befehle:**\n"
                 "`/setbirthday` - Setze deinen Geburtstag (Format: DD.MM.YYYY)\n"
+                "`/setbirthdayfor` - Setze den Geburtstag für einen anderen Benutzer (mit unscharfer Suche)\n"
                 "`/upcoming` - Zeige die nächsten 5 anstehenden Geburtstage\n"
                 "`/help` - Zeige diese Hilfe an\n\n"
                 "**Wie funktioniert's?**\n"
                 "1. Reagiere mit ✅ auf die Nachricht im Geburtstags-Kanal um Benachrichtigungen zu erhalten\n"
                 "2. Setze deinen Geburtstag mit `/setbirthday`\n"
-                "3. Erhalte Benachrichtigungen wenn jemand Geburtstag hat!\n"
-                "4. Nutze `/upcoming` um zu sehen, wer als nächstes Geburtstag hat\n\n"
+                "3. Setze Geburtstage für andere mit `/setbirthdayfor Benutzername DD.MM.YYYY`\n"
+                "4. Erhalte Benachrichtigungen wenn jemand Geburtstag hat!\n"
+                "5. Nutze `/upcoming` um zu sehen, wer als nächstes Geburtstag hat\n\n"
                 "**Hinweis:** Benachrichtigungen werden nur an Benutzer gesendet, die mit ✅ reagiert haben."
             )
             await interaction.response.send_message(help_text, ephemeral=True)
@@ -96,6 +98,116 @@ class CommandHandler:
                 )
             except Exception as e:
                 logger.error(f"Error in setbirthday command: {e}")
+                await interaction.response.send_message(
+                    "Ein Fehler ist aufgetreten. Bitte versuche es später erneut.",
+                    ephemeral=True
+                )
+
+        @self.tree.command(name="setbirthdayfor", description="Setzt den Geburtstag für einen anderen Benutzer (Format: DD.MM.YYYY)")
+        @app_commands.describe(
+            username="Der Benutzername (unterstützt unscharfe Suche)",
+            date="Das Geburtsdatum im Format DD.MM.YYYY",
+            firstname="Optional: Vorname",
+            lastname="Optional: Nachname"
+        )
+        async def setbirthdayfor(interaction: discord.Interaction, username: str, date: str, 
+                               firstname: Optional[str] = None, lastname: Optional[str] = None):
+            """Set a birthday for another user using fuzzy matching."""
+            logger.info(f"Setbirthdayfor command used by {interaction.user.name} for username: {username}")
+            
+            try:
+                # Validate date format
+                try:
+                    day, month, year = map(int, date.split('.'))
+                    if not (1 <= day <= 31 and 1 <= month <= 12):
+                        await interaction.response.send_message(
+                            "Ungültiges Datum! Bitte verwende das Format DD.MM.YYYY",
+                            ephemeral=True
+                        )
+                        return
+                except ValueError:
+                    await interaction.response.send_message(
+                        "Ungültiges Datum! Bitte verwende das Format DD.MM.YYYY",
+                        ephemeral=True
+                    )
+                    return
+
+                # Get all users from database for fuzzy matching
+                all_users = self.db.get_all_users()
+                
+                if not all_users:
+                    await interaction.response.send_message(
+                        "Keine Benutzer in der Datenbank gefunden.",
+                        ephemeral=True
+                    )
+                    return
+
+                # Find the best match using fuzzy matching
+                best_match = None
+                best_score = 0
+                
+                for user_id, db_username, db_firstname, db_lastname in all_users:
+                    # Check against username
+                    username_score = fuzz.ratio(username.lower(), db_username.lower())
+                    
+                    # Check against firstname if available
+                    firstname_score = 0
+                    if db_firstname:
+                        firstname_score = fuzz.ratio(username.lower(), db_firstname.lower())
+                    
+                    # Check against lastname if available
+                    lastname_score = 0
+                    if db_lastname:
+                        lastname_score = fuzz.ratio(username.lower(), db_lastname.lower())
+                    
+                    # Check against full name if both firstname and lastname are available
+                    fullname_score = 0
+                    if db_firstname and db_lastname:
+                        full_name = f"{db_firstname} {db_lastname}"
+                        fullname_score = fuzz.ratio(username.lower(), full_name.lower())
+                    
+                    # Take the highest score
+                    max_score = max(username_score, firstname_score, lastname_score, fullname_score)
+                    
+                    if max_score > best_score:
+                        best_score = max_score
+                        best_match = (user_id, db_username, db_firstname, db_lastname)
+
+                # Check if we found a good enough match (threshold: 70%)
+                if best_match is None or best_score < 70:
+                    await interaction.response.send_message(
+                        f"Kein passender Benutzer für '{username}' gefunden. "
+                        f"Bitte überprüfe die Schreibweise oder verwende einen anderen Namen.",
+                        ephemeral=True
+                    )
+                    return
+
+                # Create datetime object for the birthday
+                birthday = datetime(year, month, day)
+                
+                # Update database using set_birthday
+                matched_user_id, matched_username, matched_firstname, matched_lastname = best_match
+                self.db.set_birthday(
+                    user_id=matched_user_id,
+                    username=matched_username,
+                    birthday=birthday,
+                    firstname=firstname if firstname else matched_firstname,
+                    lastname=lastname if lastname else matched_lastname
+                )
+
+                # Create response message
+                display_name = matched_firstname or matched_username
+                if matched_firstname and matched_lastname:
+                    display_name = f"{matched_firstname} {matched_lastname}"
+                
+                await interaction.response.send_message(
+                    f"Geburtstag erfolgreich gesetzt für **{display_name}** ({matched_username}) auf: {date}\n"
+                    f"Übereinstimmung: {best_score}%",
+                    ephemeral=True
+                )
+                
+            except Exception as e:
+                logger.error(f"Error in setbirthdayfor command: {e}")
                 await interaction.response.send_message(
                     "Ein Fehler ist aufgetreten. Bitte versuche es später erneut.",
                     ephemeral=True

@@ -167,3 +167,50 @@ def test_get_upcoming_birthdays_limit(test_db):
     
     upcoming_all = test_db.get_upcoming_birthdays(20)
     assert len(upcoming_all) == 10  # Only 10 exist
+
+def test_get_all_users_for_fuzzy_matching(test_db):
+    """Test getting all users for fuzzy matching."""
+    # Add test users with different names
+    test_db.add_birthday(
+        111111111,
+        "john_doe",
+        datetime(2000, 1, 1),
+        "John",
+        "Doe"
+    )
+    
+    test_db.add_birthday(
+        222222222,
+        "jane_smith",
+        datetime(2000, 2, 2),
+        "Jane",
+        "Smith"
+    )
+    
+    test_db.add_birthday(
+        333333333,
+        "bob_wilson",
+        datetime(2000, 3, 3),
+        "Bob",
+        None  # No last name
+    )
+    
+    # Get all users
+    all_users = test_db.get_all_users()
+    
+    # Should get all users
+    assert len(all_users) == 3
+    
+    # Check first user
+    user1 = all_users[0]
+    assert user1[0] == 333333333  # user_id (sorted by username, so bob_wilson comes first)
+    assert user1[1] == "bob_wilson"  # username
+    assert user1[2] == "Bob"  # firstname
+    assert user1[3] is None  # lastname
+    
+    # Check second user
+    user2 = all_users[1]
+    assert user2[0] == 222222222  # user_id
+    assert user2[1] == "jane_smith"  # username
+    assert user2[2] == "Jane"  # firstname
+    assert user2[3] == "Smith"  # lastname
