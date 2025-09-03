@@ -253,6 +253,40 @@ class CommandHandler:
                     ephemeral=True
                 )
 
+        @self.tree.command(name="syncdm", description="Synchronisiert DM-Einstellungen basierend auf Reaktionen")
+        @app_commands.default_permissions(administrator=True)
+        async def syncdm(interaction: discord.Interaction):
+            """Manually sync DM preferences based on current reactions."""
+            logger.info(f"Syncdm command used by {interaction.user.name}")
+            
+            # Check if user has admin permissions
+            if not interaction.user.guild_permissions.administrator:  # type: ignore
+                await interaction.response.send_message(
+                    "Du hast keine Berechtigung, diesen Befehl auszuführen!",
+                    ephemeral=True
+                )
+                return
+            
+            # Respond immediately
+            await interaction.response.send_message(
+                "🔄 Synchronisiere DM-Einstellungen basierend auf aktuellen Reaktionen...",
+                ephemeral=True
+            )
+            
+            try:
+                await interaction.client.notification_service.sync_dm_preferences_from_reactions(interaction.guild)  # type: ignore
+                
+                await interaction.followup.send(
+                    "✅ DM-Einstellungen wurden erfolgreich synchronisiert!",
+                    ephemeral=True
+                )
+            except Exception as e:
+                logger.error(f"Error in syncdm command: {e}")
+                await interaction.followup.send(
+                    "❌ Ein Fehler ist bei der DM-Synchronisation aufgetreten.",
+                    ephemeral=True
+                )
+
         @self.tree.command(name="testdmall", description="Sendet Test-DMs an alle Benutzer mit aktivierten DM-Benachrichtigungen")
         async def testdmall(interaction: discord.Interaction):
             """Send test DMs to all users with DM preferences enabled."""
