@@ -138,7 +138,9 @@ class DatabaseService:
                 cur.execute(f"""
                     SELECT user_id, username, firstname, lastname, birthday, dm_preference 
                     FROM {self.table_name} 
-                    WHERE DATE_TRUNC('day', birthday) = DATE_TRUNC('day', CURRENT_DATE)
+                    WHERE EXTRACT(MONTH FROM birthday) = EXTRACT(MONTH FROM CURRENT_DATE)
+                    AND EXTRACT(DAY FROM birthday) = EXTRACT(DAY FROM CURRENT_DATE)
+                    AND birthday IS NOT NULL
                 """)
                 results = cur.fetchall()
                 logger.info(f"Found {len(results)} birthdays for today")
