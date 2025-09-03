@@ -93,6 +93,79 @@ class NotificationService:
             logger.error(f"Error setting up notification message: {str(e)}")
             return False
 
+    async def sync_dm_preferences_from_reactions(self, guild) -> None:
+        """Sync DM preferences based on current reactions on the notification message.
+        
+        This method checks the reactions on the notification message and updates
+        the database to match the current state of reactions, useful for catching
+        changes that happened while the bot was offline.
+        
+        Args:
+            guild: Discord guild object
+        """
+        try:
+            if not self._notification_message:
+                logger.warning("No notification message found, skipping DM preference sync")
+                return
+                
+            # Refresh the message to get current reactions
+            channel = self._notification_message.channel
+            message = await channel.fetch_message(self._notification_message.id)
+            
+            # Find the ✅ reaction
+            checkmark_reaction = None
+            for reaction in message.reactions:
+                if str(reaction.emoji) == "✅":
+                    checkmark_reaction = reaction
+                    break
+            
+            if not checkmark_reaction:
+                logger.info("No ✅ reaction found on notification message")
+                return
+                
+            # Get all users who reacted with ✅
+            reacted_user_ids = set()
+            async for user in checkmark_reaction.users():
+                if not user.bot:  # Exclude bot users
+                    reacted_user_ids.add(user.id)
+            
+            logger.info(f"Found {len(reacted_user_ids)} users with ✅ reactions")
+            
+            # Get all guild member IDs to validate
+            guild_member_ids = {member.id for member in guild.members}
+            
+            # Filter to only include current guild members
+            valid_reacted_users = reacted_user_ids.intersection(guild_member_ids)
+            
+            # Get current DM preferences from database
+            current_dm_users = set()
+            dm_enabled_users = self.db.get_users_with_dm_enabled()
+            for user_tuple in dm_enabled_users:
+                current_dm_users.add(user_tuple[0])  # Extract user_id from tuple
+            
+            # Users who have reactions but DM disabled in DB
+            to_enable = valid_reacted_users - current_dm_users
+            
+            # Users who have DM enabled in DB but no reaction (among guild members)
+            to_disable = current_dm_users.intersection(guild_member_ids) - valid_reacted_users
+            
+            # Update database
+            updates_made = 0
+            for user_id in to_enable:
+                self.db.update_dm_preference(user_id, True)
+                logger.info(f"Enabled DM preference for user {user_id} based on reaction")
+                updates_made += 1
+                
+            for user_id in to_disable:
+                self.db.update_dm_preference(user_id, False)
+                logger.info(f"Disabled DM preference for user {user_id} (no reaction found)")
+                updates_made += 1
+            
+            logger.info(f"DM preference sync complete: {updates_made} updates made")
+            
+        except Exception as e:
+            logger.error(f"Error syncing DM preferences from reactions: {e}")
+
     async def send_test_dms_to_all(self, guild: discord.Guild) -> tuple[int, int]:
         """Send test DMs to all users with DM preferences enabled.
         

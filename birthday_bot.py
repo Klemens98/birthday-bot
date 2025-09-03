@@ -99,6 +99,13 @@ class BirthdayBot(discord.Client):
                 
             if setup_result:
                 logger.info(f"Successfully set up notifications in channel: {birthday_channel.name}")
+                
+                # Sync DM preferences based on current reactions
+                guild = self.get_guild(self.config.guild_id)
+                if guild:
+                    await self.notification_service.sync_dm_preferences_from_reactions(guild)
+                else:
+                    logger.error(f"Could not find guild {self.config.guild_id} for DM preference sync")
             else:
                 logger.error("Notification setup returned False")
         except Exception as e:
