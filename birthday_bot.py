@@ -188,7 +188,7 @@ class BirthdayBot(discord.Client):
                 channel = self.get_channel(self.config.channel_id)
                 if channel and isinstance(channel, discord.TextChannel):
                     await self.birthday_service.process_todays_birthdays(
-                        channel.guild, channel, self.user)
+                        channel.guild, channel, self)
                 else:
                     logger.error(f"Could not find valid birthday channel with ID: {self.config.channel_id}")
         except Exception as e:

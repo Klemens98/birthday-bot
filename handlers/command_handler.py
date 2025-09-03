@@ -240,7 +240,7 @@ class CommandHandler:
                     return
                 
                 await interaction.client.birthday_service.process_todays_birthdays(  # type: ignore
-                    interaction.guild, channel, interaction.client.user)
+                    interaction.guild, channel, interaction.client)
                 
                 await interaction.followup.send(
                     "Geburtstags-Check erfolgreich durchgeführt!",
