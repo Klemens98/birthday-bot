@@ -15,13 +15,13 @@ class BirthdayService:
         """
         self.db = db
 
-    async def process_todays_birthdays(self, guild, channel, bot_user):
+    async def process_todays_birthdays(self, guild, channel, bot_client):
         """Process and announce today's birthdays.
         
         Args:
             guild: Discord guild object
             channel: Discord channel object
-            bot_user: Bot's user object
+            bot_client: Bot client object (to fetch users for DMs)
         
         Returns:
             list: List of processed birthday messages
@@ -50,7 +50,7 @@ class BirthdayService:
             message = self._construct_birthday_message(name_to_use, firstname, lastname, display_name)
             birthday_messages.append(message)
             
-            await self._send_notifications(channel, message, user_id, name_to_use, notif_users, bot_user)
+            await self._send_notifications(channel, message, user_id, name_to_use, notif_users, bot_client)
 
         return birthday_messages
 
@@ -74,7 +74,7 @@ class BirthdayService:
         message += "! 🎂"
         return message
 
-    async def _send_notifications(self, channel, message, birthday_user_id, name_to_use, notif_users, bot_user):
+    async def _send_notifications(self, channel, message, birthday_user_id, name_to_use, notif_users, bot_client):
         """Send birthday notifications to channel and DMs.
         
         Args:
@@ -83,15 +83,21 @@ class BirthdayService:
             birthday_user_id (int): ID of user having birthday
             name_to_use (str): Name to use in notifications
             notif_users (list): List of users to notify
-            bot_user: Bot's user object
+            bot_client: Bot client object (to fetch users)
         """
         await channel.send(message)
         
         for notif_user_id, *_ in notif_users:
-            if notif_user_id != birthday_user_id:
-                try:
-                    notif_user = await bot_user.fetch_user(notif_user_id)
-                    if notif_user:
+            try:
+                notif_user = await bot_client.fetch_user(notif_user_id)
+                if notif_user:
+                    if notif_user_id == birthday_user_id:
+                        # Send birthday greeting to the birthday person
+                        await notif_user.send(f"🎉 Alles Gute zum Geburtstag! Ich hoffe, du hast einen wunderschönen Tag! 🎂")
+                        logger.info(f"Sent birthday greeting to birthday user {notif_user_id}")
+                    else:
+                        # Send notification to others about the birthday
                         await notif_user.send(f"🎂 {name_to_use} hat heute Geburtstag!")
-                except Exception as e:
-                    logger.error(f"Failed to send DM to user {notif_user_id}: {e}")
+                        logger.info(f"Sent birthday notification to user {notif_user_id}")
+            except Exception as e:
+                logger.error(f"Failed to send DM to user {notif_user_id}: {e}")

@@ -40,12 +40,9 @@ class NotificationService:
             message = await channel.fetch_message(message_id)
             if "Geburtstags-Benachrichtigungen" in message.content and str(emoji) == "✅":
                 logger.info(f"User {user_id} enabled DM notifications")
-                # Ensure user exists in database
-                try:
-                    self.db.add_birthday(user_id, str(user_id), datetime.now())
-                except:
-                    pass  # User might already exist
+                # Update DM preference (user should already exist from startup sync)
                 self.db.update_dm_preference(user_id, True)
+                logger.info(f"DM preference enabled for user {user_id}")
         except Exception as e:
             logger.error(f"Error handling reaction add: {e}")
 
