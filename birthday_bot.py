@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import tasks
 import logging
 import pytz
+from datetime import time
 
 from database import DatabaseService
 from services.birthday_service import BirthdayService
@@ -184,22 +185,29 @@ class BirthdayBot(discord.Client):
         except Exception as e:
             logger.error(f"Error handling reaction remove: {str(e)}")
 
-    @tasks.loop(hours=24)
+    @tasks.loop(time=time(hour=0, minute=0, tzinfo=pytz.timezone('Europe/Berlin')))
     async def check_birthdays(self):
-        """Check and announce birthdays daily."""
+        """Check and announce birthdays daily at midnight Berlin time."""
         try:
             now = get_berlin_now()
-            logger.info(f"Running birthday check at {now}")
+            logger.info(f"🎂 BIRTHDAY CHECK STARTED - Berlin time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            logger.info(f"🔍 Timezone fix active - checking birthdays for Berlin date: {now.strftime('%B %d, %Y')}")
             
-            if now.hour == 0:  # Only check at midnight German time
-                channel = self.get_channel(self.config.channel_id)
-                if channel and isinstance(channel, discord.TextChannel):
-                    await self.birthday_service.process_todays_birthdays(
-                        channel.guild, channel, self)
+            channel = self.get_channel(self.config.channel_id)
+            if channel and isinstance(channel, discord.TextChannel):
+                birthday_messages = await self.birthday_service.process_todays_birthdays(
+                    channel.guild, channel, self)
+                
+                if birthday_messages:
+                    logger.info(f"✅ BIRTHDAY CHECK SUCCESS - Found and processed {len(birthday_messages)} birthday(s)")
+                    for i, message in enumerate(birthday_messages, 1):
+                        logger.info(f"   🎉 Birthday #{i}: {message}")
                 else:
-                    logger.error(f"Could not find valid birthday channel with ID: {self.config.channel_id}")
+                    logger.info(f"ℹ️  BIRTHDAY CHECK COMPLETE - No birthdays found for {now.strftime('%B %d, %Y')} (Berlin time)")
+            else:
+                logger.error(f"Could not find valid birthday channel with ID: {self.config.channel_id}")
         except Exception as e:
-            logger.error(f"Error during birthday check: {str(e)}")
+            logger.error(f"❌ ERROR during birthday check: {str(e)}")
 
 def main():
     """Main entry point for the bot."""

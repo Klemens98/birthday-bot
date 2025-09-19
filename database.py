@@ -62,7 +62,10 @@ class DatabaseService:
             with conn.cursor() as cur:
                 logger.info(f"Querying upcoming {limit} birthdays from table: {self.table_name}")
                 cur.execute(f"""
-                    WITH birthday_this_year AS (
+                    WITH berlin_date AS (
+                        SELECT (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin')::date as today_berlin
+                    ),
+                    birthday_this_year AS (
                         SELECT 
                             user_id, 
                             username, 
@@ -70,17 +73,17 @@ class DatabaseService:
                             lastname, 
                             birthday,
                             dm_preference,
-                            DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                            DATE(EXTRACT(YEAR FROM (SELECT today_berlin FROM berlin_date)) || '-' || 
                                  LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
                                  LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0')) as this_year_birthday,
                             CASE 
-                                WHEN DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                                WHEN DATE(EXTRACT(YEAR FROM (SELECT today_berlin FROM berlin_date)) || '-' || 
                                          LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
-                                         LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0')) >= CURRENT_DATE
-                                THEN DATE(EXTRACT(YEAR FROM CURRENT_DATE) || '-' || 
+                                         LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0')) >= (SELECT today_berlin FROM berlin_date)
+                                THEN DATE(EXTRACT(YEAR FROM (SELECT today_berlin FROM berlin_date)) || '-' || 
                                          LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
                                          LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0'))
-                                ELSE DATE((EXTRACT(YEAR FROM CURRENT_DATE) + 1) || '-' || 
+                                ELSE DATE((EXTRACT(YEAR FROM (SELECT today_berlin FROM berlin_date)) + 1) || '-' || 
                                          LPAD(EXTRACT(MONTH FROM birthday)::text, 2, '0') || '-' || 
                                          LPAD(EXTRACT(DAY FROM birthday)::text, 2, '0'))
                             END as next_birthday
@@ -134,16 +137,29 @@ class DatabaseService:
         """
         with self._get_connection() as conn:
             with conn.cursor() as cur:
-                logger.info(f"Querying today's birthdays from table: {self.table_name}")
+                logger.info(f"🔍 Querying today's birthdays from table: {self.table_name}")
+                
+                # First, let's see what dates we're working with
+                cur.execute("SELECT CURRENT_DATE as db_utc_date, (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin')::date as berlin_date")
+                date_info = cur.fetchone()
+                db_date, berlin_date = date_info
+                logger.info(f"📅 Database UTC date: {db_date}, Berlin date: {berlin_date}")
+                
+                # Use timezone-aware date comparison to ensure we check against Berlin time
                 cur.execute(f"""
                     SELECT user_id, username, firstname, lastname, birthday, dm_preference 
                     FROM {self.table_name} 
-                    WHERE EXTRACT(MONTH FROM birthday) = EXTRACT(MONTH FROM CURRENT_DATE)
-                    AND EXTRACT(DAY FROM birthday) = EXTRACT(DAY FROM CURRENT_DATE)
+                    WHERE EXTRACT(MONTH FROM birthday) = EXTRACT(MONTH FROM (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin'))
+                    AND EXTRACT(DAY FROM birthday) = EXTRACT(DAY FROM (CURRENT_DATE AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Berlin'))
                     AND birthday IS NOT NULL
                 """)
                 results = cur.fetchall()
-                logger.info(f"Found {len(results)} birthdays for today")
+                logger.info(f"🎂 Found {len(results)} birthdays for Berlin date {berlin_date}")
+                
+                if results:
+                    for user_id, username, firstname, lastname, birthday, dm_pref in results:
+                        logger.info(f"   🎉 Birthday found: {username} (ID: {user_id}) - Born: {birthday}")
+                
                 return results
 
     def get_users_with_dm_enabled(self):
